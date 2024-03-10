@@ -70,11 +70,6 @@ update:
     - '*-rc'
 
 test:
-  environment:
-    contents:
-      packages:
-        - bash
-        - wolfi-base
   pipeline:
     - runs: |
           cleanup() {
