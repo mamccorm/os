@@ -1,0 +1,80 @@
+package:
+  name: artifactory
+  version: 7.77.9
+  epoch: 1
+  description: "Artifactory OSS pre-compiled binary"
+  copyright:
+    - license: Apache-2.0
+  # JFrog does not publish artifacts for arm.
+  target-architecture:
+    - x86_64
+  dependencies:
+    runtime:
+      - bash
+      - ca-certificates-bundle
+      - cronie
+      - openjdk-17-default-jvm
+      - openssl
+
+environment:
+  contents:
+    packages:
+      - build-base
+      - busybox
+      - wolfi-base
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://releases.jfrog.io/artifactory/bintray-artifactory/org/artifactory/oss/jfrog-artifactory-oss/${{package.version}}/jfrog-artifactory-oss-${{package.version}}-linux.tar.gz
+      expected-sha256: 432e0501002b8d0b61bb4b496f4e29a6db95190442d6eb5b98f7ad9f485a9f60
+
+  - runs: |
+      mkdir -p ${{targets.destdir}}/opt
+
+      tar -xzvf jfrog-artifactory-oss-${{package.version}}-linux.tar.gz -C ${{targets.destdir}}/opt
+      mv ${{targets.destdir}}/opt/artifactory-oss-${{package.version}} ${{targets.destdir}}/opt/artifactory
+
+      chmod +x ${{targets.destdir}}/opt/artifactory/app/bin/artifactory.sh
+
+update:
+  enabled: false
+
+test:
+  environment:
+    contents:
+      packages:
+      - bash
+      - cronie
+      - curl
+      - openjdk-17-default-jvm
+  pipeline:
+    - runs: |
+        echo "Starting Artifactory..."
+        /opt/artifactory/app/bin/artifactory.sh start &
+        ARTIFACTORY_PID=$!
+        trap "echo 'Stopping Artifactory...'; kill $ARTIFACTORY_PID; echo 'Artifactory process terminated.'" EXIT
+
+        MAX_RETRIES=5
+        COUNT=0
+
+        echo "Checking Artifactory's availability..."
+        set +e
+        while [ $COUNT -lt $MAX_RETRIES ]
+        do
+            curl -f http://localhost:8082/
+            if [ $? -eq 0 ]; then
+                echo "Artifactory is up and running."
+                break
+            else
+                echo "Artifactory did not respond as expected, retrying in 15 seconds..."
+                sleep 15
+                COUNT=$((COUNT+1))
+            fi
+        done
+
+        # If the script exits normally, the trap will still execute and clean up
+        if [ $COUNT -eq $MAX_RETRIES ]; then
+            echo "Failed to connect to Artifactory after $MAX_RETRIES attempts."
+            exit 1
+        fi
