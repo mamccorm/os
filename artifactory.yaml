@@ -4,7 +4,7 @@ package:
   epoch: 1
   description: "Artifactory OSS pre-compiled binary"
   copyright:
-    - license: Apache-2.0
+    - license: TODO-UNKNOWN
   # JFrog does not publish artifacts for arm.
   target-architecture:
     - x86_64
