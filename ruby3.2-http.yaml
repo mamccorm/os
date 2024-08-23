@@ -14,7 +14,7 @@ environment:
       - ca-certificates-bundle
       - ruby-3.2
       - ruby-3.2-dev
-      - ruby3.2-bundler  # Bundler is needed to install dependencies
+      - ruby3.2-bundler
 
 vars:
   gem: http
@@ -58,9 +58,10 @@ test:
       packages:
         - ruby-3.2
         - ruby-3.2-dev
+  # TODO: The GEM installs below are just to see how many deps we actually need.
+  # These would eventually need to be packaged as well.
+  # 'llhttp-ffi' will fail to install on arm, so we'll definately need to package it.
   pipeline:
     - runs: |
-        # TODO!!!! Manually installing these deps one by one, to see what the final
-        # list is. We'd need to then package each from source.
         gem install addressable http-cookie http-form_data llhttp-ffi
         ruby -e "require 'http'"

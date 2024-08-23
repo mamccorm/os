@@ -1,0 +1,65 @@
+package:
+  name: ruby3.2-llhttp
+  version: 2023.03.29
+  epoch: 0
+  description: Ruby bindings for llhttp.
+  copyright:
+    - license: MIT
+
+environment:
+  contents:
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - ruby-3.2
+      - ruby-3.2-dev
+      - ruby3.2-bundler
+
+# The original release tag is in the format: 2023-03-29. We need to convert
+# back into that format before performing a git clone.
+var-transforms:
+  - from: ${{package.version}}
+    match: \.
+    replace: "-"
+    to: mangled-package-version
+
+vars:
+  gem: llhttp-ffi
+
+pipeline:
+  - uses: git-checkout
+    with:
+      expected-commit: eb61456a325d87fcbc9e4c5a7512d9589737abae
+      repository: https://github.com/bryanp/llhttp.git
+      tag: ${{vars.mangled-package-version}}
+
+  # TODO: This step succeeds.
+  - uses: ruby/build
+    working-directory: ffi
+    with:
+      gem: ${{vars.gem}}
+
+  # TODO - But the install FAILS with:
+  # "Could not find a valid gem 'llhttp-ffi-2023-03-29.gem' (= 2023.pre.03.pre.29) in any repository"
+  #
+  # The reason: ffi uses different versioning vs the git tag:
+  # - https://github.com/bryanp/llhttp/blob/2023-03-29/ffi/lib/llhttp/version.rb
+  # i.e, it's built as 'llhttp-ffi-0.5.0.gem'
+  - uses: ruby/install
+    working-directory: ffi
+    with:
+      gem: ${{vars.gem}}
+      version: ${{vars.mangled-package-version}}
+
+  - uses: ruby/clean
+
+update:
+  enabled: true
+  # The original release tag is in the format: 2023-03-29, but that is not a
+  # valid apk package version, so we need to convert it to 2023.03.29.
+  version-transform:
+    - match: \-
+      replace: .
+  github:
+    identifier: bryanp/llhttp
