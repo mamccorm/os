@@ -1,0 +1,66 @@
+package:
+  name: ruby3.2-http
+  version: 5.2.0
+  epoch: 0
+  description: HTTP (The Gem! a.k.a. http.rb) - a fast Ruby HTTP client with a chainable API, streaming support, and timeouts
+  copyright:
+    - license: MIT
+
+environment:
+  contents:
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - ruby-3.2
+      - ruby-3.2-dev
+      - ruby3.2-bundler  # Bundler is needed to install dependencies
+
+vars:
+  gem: http
+
+pipeline:
+  - uses: git-checkout
+    with:
+      expected-commit: bb754c7d85dca26180567b781815e1b84c784d86
+      repository: https://github.com/httprb/http.git
+      tag: v${{package.version}}
+
+  - runs: |
+      bundle install
+
+  # Run unit tests. We aren't making any code changes or patches upstream, but
+  # still good as an additional layer of validation.
+  - runs: |
+      bundle exec rake
+
+  - uses: ruby/build
+    with:
+      gem: ${{vars.gem}}
+
+  - uses: ruby/install
+    with:
+      gem: ${{vars.gem}}
+      version: ${{package.version}}
+
+  - uses: ruby/clean
+
+update:
+  enabled: true
+  github:
+    identifier: httprb/http
+    strip-prefix: v
+    use-tag: true
+
+test:
+  environment:
+    contents:
+      packages:
+        - ruby-3.2
+        - ruby-3.2-dev
+  pipeline:
+    - runs: |
+        # TODO!!!! Manually installing these deps one by one, to see what the final
+        # list is. We'd need to then package each from source.
+        gem install addressable http-cookie http-form_data llhttp-ffi
+        ruby -e "require 'http'"
