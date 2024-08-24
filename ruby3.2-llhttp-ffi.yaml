@@ -1,5 +1,5 @@
 package:
-  name: ruby3.2-llhttp
+  name: ruby3.2-llhttp-ffi
   version: 2023.03.29
   epoch: 0
   description: Ruby bindings for llhttp.
