@@ -1,7 +1,7 @@
 package:
   name: yaml-cpp
   version: 0.8.0
-  epoch: 4
+  epoch: 5
   description: "yaml-cpp is a YAML parser and emitter in C++ matching the YAML 1.2 spec."
   copyright:
     - license: MIT
@@ -28,7 +28,7 @@ pipeline:
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_INSTALL_LIBDIR=lib \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=true \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DYAML_BUILD_SHARED_LIBS=ON \
         -DYAML_CPP_BUILD_TESTS=OFF \
         -DYAML_CPP_BUILD_TOOLS=OFF
@@ -48,8 +48,52 @@ subpackages:
       runtime:
         - yaml-cpp
 
+  - name: "yaml-cpp-static"
+    description: "Static library for yaml-cpp"
+    pipeline:
+      - uses: split/static
+
 update:
   enabled: true
   github:
     identifier: jbeder/yaml-cpp
     tag-filter: 0.
+
+test:
+  environment:
+    contents:
+      packages:
+        - build-base
+        - gcc
+        - cmake
+        - yaml-cpp-dev
+  pipeline:
+    - name: "Verify yaml-cpp Library Installation"
+      runs: |
+        echo "Checking if yaml-cpp shared library exists..."
+        find /usr -name 'libyaml-cpp.so' || (echo "yaml-cpp library not found!" && exit 1)
+    - name: "Compile and Run Test Program"
+      runs: |
+        echo "Writing simple test program..."
+        cat << EOF > test_yaml.cpp
+        #include <yaml-cpp/yaml.h>
+        #include <iostream>
+
+        int main() {
+            YAML::Node config = YAML::Load("{name: example, value: 42}");
+            std::cout << "Name: " << config["name"].as<std::string>() << std::endl;
+            std::cout << "Value: " << config["value"].as<int>() << std::endl;
+            return 0;
+        }
+        EOF
+
+        echo "Compiling test program with yaml-cpp..."
+        g++ test_yaml.cpp -o test_yaml -lyaml-cpp
+
+        echo "Running test program..."
+        ./test_yaml
+    - name: "Validate Test Program Output"
+      runs: |
+        echo "Expected output: Name: example, Value: 42"
+        ./test_yaml | grep -q "Name: example" && echo "Name validation passed." || (echo "Name validation failed." && exit 1)
+        ./test_yaml | grep -q "Value: 42" && echo "Value validation passed." || (echo "Value validation failed." && exit 1)
