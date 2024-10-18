@@ -1,7 +1,7 @@
 package:
   name: strongswan
   version: 5.9.14
-  epoch: 0
+  epoch: 1
   description: "strongSwan - IPsec-based VPN"
   copyright:
     - license: GPL-2.0-only
@@ -43,7 +43,6 @@ pipeline:
       opts: |
         --prefix=/usr \
         --sysconfdir=/etc \
-        --disable-defaults \
         --enable-charon \
         --enable-ikev2 \
         --enable-nonce \
@@ -91,8 +90,26 @@ update:
     - '.*rc.*'
     - '.*dr.*'
 
+# TODO - these basic tests DO NOT validate this applications functionality.
+# We need some level of functional testing.
+#
+# ******** If you are reading this comment in a PR - Reject this PR ********
+# ******** The person has not taken the time to properly test this. ********
 test:
   pipeline:
     - name: "Basic version checks"
       runs: |
+        ipsec --help
+        ipsec --version
         swanctl --help
+    - name: "Check 'ipsec version' returns strongSwan"
+      runs: |
+        ipsec version > /tmp/strongswan-version.log 2>&1
+
+        if grep -q "Linux strongSwan" /tmp/strongswan-version.log; then
+          echo "Test passed: Found 'Linux strongSwan' in version output."
+        else
+          echo "Test failed: 'Linux strongSwan' not found in version output."
+          cat /tmp/strongswan-version.log
+          exit 1
+        fi
