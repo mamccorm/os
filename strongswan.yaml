@@ -1,7 +1,7 @@
 package:
   name: strongswan
   version: 5.9.14
-  epoch: 1
+  epoch: 0
   description: "strongSwan - IPsec-based VPN"
   copyright:
     - license: GPL-2.0-only
@@ -13,8 +13,17 @@ environment:
       - bison
       - build-base
       - busybox
+      - curl-dev
       - flex
       - gmp-dev
+      - libgcrypt-dev
+      - sqlite-dev
+      - linux-headers
+      - libcap-ng-dev
+      - libcap-dev
+      - libedit-dev
+      - libidn-dev
+      - libxml2-dev
       - openssl-dev
       - gperf
       - libtool
@@ -31,36 +40,49 @@ pipeline:
       tag: ${{package.version}}
       expected-commit: dea8493f3a6a5ef16ee97d0d446ca52f8f8afa3c
 
-  # Add m4_pattern_allow to allow the use of AC_LIB_PREFIX macro.
-  # Build fails on first attempt (but succeeds on subsequent), without this.
   - runs: |
       sed -i '1im4_pattern_allow([AC_LIB_PREFIX])' configure.ac
+      mkdir -p "${{targets.destdir}}/etc/strongswan.d/charon"
 
-  # Reference (not an official container image):
-  # - https://github.com/strongX509/docker/blob/master/strongswan/Dockerfile
+  # Drew inspiration here from how other distros had packaged this.
   - uses: autoconf/configure
     with:
       opts: |
         --prefix=/usr \
         --sysconfdir=/etc \
+        --libexecdir=/usr/libexec \
+        --enable-conf \
         --enable-charon \
-        --enable-ikev2 \
-        --enable-nonce \
-        --enable-random \
-        --enable-openssl \
-        --enable-pem \
-        --enable-x509 \
-        --enable-pubkey \
-        --enable-constraints \
-        --enable-pki \
-        --enable-socket-default \
-        --enable-kernel-netlink \
         --enable-swanctl \
-        --enable-resolve \
+        --enable-stroke \
+        --enable-openssl \
+        --enable-gmp \
+        --enable-gcrypt \
+        --enable-sql \
+        --enable-sqlite \
+        --enable-dhcp \
+        --enable-curl \
+        --enable-kernel-libipsec \
+        --enable-kernel-netlink \
+        --enable-addrblock \
+        --enable-ccm \
+        --enable-cmac \
+        --enable-ctr \
         --enable-eap-identity \
         --enable-eap-md5 \
-        --enable-eap-dynamic \
+        --enable-eap-mschapv2 \
+        --enable-eap-radius \
         --enable-eap-tls \
+        --enable-eap-ttls \
+        --enable-farp \
+        --enable-gcm \
+        --enable-hmac \
+        --enable-md4 \
+        --enable-md5 \
+        --enable-random \
+        --enable-sha1 \
+        --enable-sha2 \
+        --enable-unity \
         --enable-updown \
         --enable-vici \
         --enable-silent-rules
@@ -69,15 +91,29 @@ pipeline:
 
   - uses: autoconf/make-install
 
+  # When running `charon`, we are running into errors such as:
+  # feature CUSTOM:libcharon-receiver in critical plugin 'charon' has unmet dependency: HASHER:HASH_SHA1
+  # Which indicate missing plugins or configurations. The plugins are definitely installed, however some
+  # of the .conf files don't appear to be getting copied into place by the build? This is my 'attempt'
+  # at doing so.
+  #
+  # However, those .conf files are.. empty... why? No idea. Perhaps we do NOT need to do this at all,
+  # and we need to provide our own /conf files? basically, make 'charon' work.
+  #
+  - runs: |
+      # Copy the main configuration file
+      cp conf/strongswan.conf "${{targets.destdir}}/etc/strongswan.conf"
+
+      # Copy all plugin configuration files
+      cp conf/plugins/*.conf "${{targets.destdir}}/etc/strongswan.d/charon/"
   - uses: strip
 
 subpackages:
   - name: "${{package.name}}-compat"
     pipeline:
-      # https://github.com/strongX509/docker/blob/master/strongswan/Dockerfile#L27C10-L27C35
       - runs: |
-          mkdir -p "${{targets.subpkgdir}}"
-          ln -sf /usr/libexec/ipsec/charon ${{targets.subpkgdir}}/charon
+          mkdir -p "${{targets.subpkgdir}}/usr/bin"
+          ln -sf /usr/libexec/ipsec/charon ${{targets.subpkgdir}}/usr/bin/charon
 
 update:
   enabled: true
@@ -90,11 +126,6 @@ update:
     - '.*rc.*'
     - '.*dr.*'
 
-# TODO - these basic tests DO NOT validate this applications functionality.
-# We need some level of functional testing.
-#
-# ******** If you are reading this comment in a PR - Reject this PR ********
-# ******** The person has not taken the time to properly test this. ********
 test:
   pipeline:
     - name: "Basic version checks"
