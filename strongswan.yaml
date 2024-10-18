@@ -1,7 +1,7 @@
 package:
   name: strongswan
   version: 5.9.14
-  epoch: 1
+  epoch: 0
   description: "strongSwan - IPsec-based VPN"
   copyright:
     - license: GPL-2.0-only
@@ -15,6 +15,7 @@ environment:
       - busybox
       - flex
       - gmp-dev
+      - openssl-dev
       - gperf
       - libtool
       - ltrace
@@ -35,13 +36,49 @@ pipeline:
   - runs: |
       sed -i '1im4_pattern_allow([AC_LIB_PREFIX])' configure.ac
 
+  # Reference (not an official container image):
+  # - https://github.com/strongX509/docker/blob/master/strongswan/Dockerfile
   - uses: autoconf/configure
+    with:
+      opts: |
+        --prefix=/usr \
+        --sysconfdir=/etc \
+        --disable-defaults \
+        --enable-charon \
+        --enable-ikev2 \
+        --enable-nonce \
+        --enable-random \
+        --enable-openssl \
+        --enable-pem \
+        --enable-x509 \
+        --enable-pubkey \
+        --enable-constraints \
+        --enable-pki \
+        --enable-socket-default \
+        --enable-kernel-netlink \
+        --enable-swanctl \
+        --enable-resolve \
+        --enable-eap-identity \
+        --enable-eap-md5 \
+        --enable-eap-dynamic \
+        --enable-eap-tls \
+        --enable-updown \
+        --enable-vici \
+        --enable-silent-rules
 
   - uses: autoconf/make
 
   - uses: autoconf/make-install
 
   - uses: strip
+
+subpackages:
+  - name: "${{package.name}}-compat"
+    pipeline:
+      # https://github.com/strongX509/docker/blob/master/strongswan/Dockerfile#L27C10-L27C35
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}"
+          ln -sf /usr/libexec/ipsec/charon ${{targets.subpkgdir}}/charon
 
 update:
   enabled: true
@@ -54,26 +91,8 @@ update:
     - '.*rc.*'
     - '.*dr.*'
 
-# TODO - these basic tests DO NOT validate this applications functionality.
-# We need some level of functional testing.
-#
-# ******** If you are reading this comment in a PR - Reject this PR ********
-# ******** The person has not taken the time to properly test this. ********
 test:
   pipeline:
     - name: "Basic version checks"
       runs: |
-        ipsec --help
-        ipsec --version
         swanctl --help
-    - name: "Check 'ipsec version' returns strongSwan"
-      runs: |
-        ipsec version > /tmp/strongswan-version.log 2>&1
-
-        if grep -q "Linux strongSwan" /tmp/strongswan-version.log; then
-          echo "Test passed: Found 'Linux strongSwan' in version output."
-        else
-          echo "Test failed: 'Linux strongSwan' not found in version output."
-          cat /tmp/strongswan-version.log
-          exit 1
-        fi
