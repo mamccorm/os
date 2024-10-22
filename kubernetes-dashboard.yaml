@@ -1,7 +1,7 @@
 package:
   name: kubernetes-dashboard
   version: 7.8.0
-  epoch: 0
+  epoch: 1
   description: General-purpose web UI for Kubernetes clusters
   copyright:
     - license: Apache-2.0
@@ -9,16 +9,15 @@ package:
 environment:
   contents:
     packages:
-      - build-base
       - busybox
-      - ca-certificates-bundle
+      - corepack
       - curl
-      - go
       - nodejs
       - npm
       - perl
       - posix-libc-utils
-      - yarn
+  environment:
+    COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
 
 pipeline:
   - uses: git-checkout
@@ -27,18 +26,41 @@ pipeline:
       tag: kubernetes-dashboard-${{package.version}}
       expected-commit: 28539a32f10353285eb616446684feeca664583c
 
-  - working-directory: modules/web
-    runs: |
-      yarn install
+  - uses: go/build
+    with:
+      go-package: go
+      modroot: ./modules/web
+      packages: .
+      ldflags: -X main.version=${{package.version}} -X main.gitCommit=$(git rev-parse HEAD)
+      output: /usr/share/kubernetes-dashboard/dashboard
 
-      PATH=$PATH:$(go env GOPATH)/bin GOPATH=$(go env GOPATH) ARCH=$(go env GOARCH) make build
+  - working-directory: modules/web
+    # **TODO:** Dev notes for triage, do not merge this comment with final changes.
+    # The upstream project defines 'yarn' v3.3.0 here:
+    # - https://github.com/kubernetes/dashboard/blob/kubernetes-dashboard-7.8.0/modules/web/.yarnrc.yml
+    #
+    # Our 'yarn' package in wolfi is for v1.x, which looks to be EOL. So there
+    # will be separate packaging work / considerations needed here for yarn.
+    #
+    # yarn v2 and later, recommend using `corepack` to download and set the
+    # correct yarn version. Because this project has a `.yarnrc` file, this
+    # means if we enable corepack then run `yarn install`, it'll download the
+    # correct version (public binary) for the project to run. This is what we
+    # are trying to do here.
+    #
+    # The goal here was to try and resolve melange build failures:
+    # typescript@patch:typescript@npm%3A5.4.3#~builtin<compat/typescript>::version=5.4.3&hash=d73830: The remote archive doesn't match the expected checksum
+    # typescript@patch:typescript@npm%3A5.1.6#~builtin<compat/typescript>::version=5.1.6&hash=d73830: The remote archive doesn't match the expected checksum
+    runs: |
+      corepack enable
+      yarn cache clean --all
+      yes | yarn up --mode update-lockfile
+      yarn install
 
       mkdir -p "${{targets.destdir}}"/usr/share/kubernetes-dashboard
       mv .dist/* "${{targets.destdir}}"/usr/share/kubernetes-dashboard/
       mv "${{targets.destdir}}"/usr/share/kubernetes-dashboard/dashboard-web "${{targets.destdir}}"/usr/share/kubernetes-dashboard/dashboard
-
-      mkdir -p "${{targets.destdir}}"/usr/bin
-      ln -sf /usr/share/kubernetes-dashboard/dashboard "${{targets.destdir}}"/usr/bin/dashboard
+      ln -sf /usr/share/kubernetes-dashboard/dashboard "${{targets.destdir}}"/usr/share/kubernetes-dashboard/dashboard
 
   - uses: strip
 
