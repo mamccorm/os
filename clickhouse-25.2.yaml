@@ -169,6 +169,15 @@ subpackages:
           ln -s /dev/stderr ${{targets.contextdir}}/var/log/clickhouse-server/clickhouse_error.log
           mkdir -p ${{targets.contextdir}}/var/lib
           ln -s /bitnami/clickhouse/data ${{targets.contextdir}}/var/lib/clickhouse
+    test:
+      environment:
+        contents:
+          packages:
+            - ${{package.name}}
+      pipeline:
+        - uses: bitnami/validate-welcome-message
+          with:
+            app-name: clickhouse
 
 update:
   enabled: true

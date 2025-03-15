@@ -203,7 +203,6 @@ subpackages:
                     /opt/bitnami/scripts/keycloak/run.sh
                 timeout: 60
                 expected_output: |
-                  Welcome to the Bitnami keycloak container
                   keycloak setup finished!
                   server listening on
                   Keycloak ${{package.version}}
@@ -221,6 +220,9 @@ subpackages:
                     exit 1
                   }
                   echo "$url had expected output: $response"
+        - uses: bitnami/validate-welcome-message
+          with:
+            app-name: keycloak
 
 test:
   pipeline:
