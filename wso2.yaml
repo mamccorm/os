@@ -1,0 +1,443 @@
+package:
+  name: wso2
+  # IMPORTANT - Manual updates required between versions. Please refer to the
+  # vars section below.
+  version: 7.1.0
+  epoch: 0
+  description: "WSO2 Identity Server - Open source identity and access management solution"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - netcat-openbsd
+      - openjdk-${{vars.runtime-java-version}}-default-jvm
+      - tzdata
+
+vars:
+  # --- Manual update required, docker-entrypoint vars ---
+  # This application depends on docker-entrypoint scripts, which are contained
+  # in a different repository. The tagging format is also slightly different.
+  # Whilst releases are not frequent, for each new-version update, please check
+  # what the 'closest' corresponding release tag is here, then update below:
+  # - https://github.com/wso2/docker-is
+  docker-entrypoint-git-repo-tag: v7.1.0.1
+  docker-entrypoint-git-repo-sha: 5c550233f4dd0517576d223b3d50ee4c639699c0
+  java-version: 11
+  runtime-java-version: 21
+
+environment:
+  contents:
+    packages:
+      - busybox
+      - maven
+      - openjdk-${{vars.java-version}}-default-jdk
+      - zip
+  environment:
+    JAVA_HOME: /usr/lib/jvm/java-${{vars.java-version}}-openjdk
+    # Required for compatibility with older JAR files in Maven dependencies that don't follow strict ZIP specifications
+    JAVA_TOOL_OPTIONS: "-Djdk.util.zip.disableZip64ExtraFieldValidation=true -Djdk.nio.zipfs.allowDotZipEntry=true"
+    MAVEN_OPTS: |
+      -Xmx2g
+      -Dmaven.artifact.threads=10
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/wso2/product-is
+      tag: v${{package.version}}
+      expected-commit: d1738c763163b0df2722be27eac65e5a7470b02a
+
+  - uses: git-checkout
+    with:
+      repository: https://github.com/wso2/docker-is
+      tag: ${{vars.docker-entrypoint-git-repo-tag}}
+      expected-commit: ${{vars.docker-entrypoint-git-repo-sha}}
+      destination: docker-is
+
+  - runs: |
+      # Build all modules from the root
+      mvn clean install -Dmaven.test.skip=true
+
+  - runs: |
+      # Create installation directory structure
+      mkdir -p ${{targets.destdir}}/usr/share/java/wso2is
+      mkdir -p ${{targets.destdir}}/usr/bin
+      mkdir -p ${{targets.destdir}}/var/lib/wso2is
+      mkdir -p ${{targets.destdir}}/var/log/wso2is
+
+      # Install from distribution ZIP
+      unzip -q modules/distribution/target/wso2is-${{package.version}}.zip -d modules/distribution/target/
+      cp -r modules/distribution/target/wso2is-${{package.version}}/* ${{targets.destdir}}/usr/share/java/wso2is/
+      chmod +x ${{targets.destdir}}/usr/share/java/wso2is/bin/*.sh 2>/dev/null
+
+      # Remove platform-specific binaries for other architectures
+      # This prevents strip failures and reduces package size
+      case "$(uname -m)" in
+        x86_64)
+          # On x86_64, remove ARM/other architectures
+          find ${{targets.destdir}}/usr/share/java/wso2is -type d -name "*aarch64*" -exec rm -rf {} + 2>/dev/null || true
+          find ${{targets.destdir}}/usr/share/java/wso2is -type d -name "*arm*" -exec rm -rf {} + 2>/dev/null || true
+          ;;
+        aarch64)
+          # On ARM64, remove x86 architectures
+          find ${{targets.destdir}}/usr/share/java/wso2is -type d -name "*x86*" -exec rm -rf {} + 2>/dev/null || true
+          find ${{targets.destdir}}/usr/share/java/wso2is -type d -name "*amd64*" -exec rm -rf {} + 2>/dev/null || true
+          ;;
+      esac
+      # Always remove Windows and macOS binaries
+      find ${{targets.destdir}}/usr/share/java/wso2is -type d -name "*win32*" -exec rm -rf {} + 2>/dev/null || true
+      find ${{targets.destdir}}/usr/share/java/wso2is -type d -name "*macosx*" -exec rm -rf {} + 2>/dev/null || true
+
+      # Create symlinks for data and logs
+      ln -sf /var/lib/wso2is ${{targets.destdir}}/usr/share/java/wso2is/repository/database
+      ln -sf /var/log/wso2is ${{targets.destdir}}/usr/share/java/wso2is/repository/logs
+
+      # Copy docker-entrypoint.sh from the docker-is repository
+      cp docker-is/dockerfiles/alpine/is/docker-entrypoint.sh ${{targets.destdir}}/usr/share/java/wso2is/
+      chmod +x ${{targets.destdir}}/usr/share/java/wso2is/docker-entrypoint.sh
+
+      # Make all scripts executable
+      if [ -d ${{targets.destdir}}/usr/share/java/wso2is/bin ]; then
+        chmod +x ${{targets.destdir}}/usr/share/java/wso2is/bin/*.sh
+      fi
+
+  - uses: strip
+
+subpackages:
+  - name: ${{package.name}}-identity-server-compat
+    description: "Compatibility package for WSO2 Identity Server Docker deployments"
+    pipeline:
+      - runs: |
+          mkdir -p ${{targets.destdir}}/home/wso2carbon
+
+          # Create symlink for WSO2 IS directory where Docker expects it
+          ln -sf /usr/share/java/wso2is ${{targets.destdir}}/home/wso2carbon/wso2is-${{package.version}}
+
+          # Create symlinks for Docker scripts
+          mkdir -p ${{targets.destdir}}/
+          ln -sf /usr/share/java/wso2is/bin/wso2server.sh ${{targets.destdir}}/wso2server.sh
+          ln -sf /usr/share/java/wso2is/docker-entrypoint.sh ${{targets.destdir}}/home/wso2carbon/docker-entrypoint.sh
+          ln -sf /usr/share/java/wso2is/docker-entrypoint.sh ${{targets.destdir}}/docker-entrypoint.sh
+
+          # Create Java preferences directories
+          mkdir -p ${{targets.destdir}}/home/wso2carbon/.java/.systemPrefs
+          mkdir -p ${{targets.destdir}}/home/wso2carbon/.java/.userPrefs
+    test:
+      environment:
+        contents:
+          packages:
+            - ${{package.name}}
+      pipeline:
+        - name: Test root-level symlinks
+          runs: |
+            [ -f /home/wso2carbon/wso2is-${{package.version}}/README.txt ]
+            [ -f /wso2server.sh ]
+            [ -f /home/wso2carbon/docker-entrypoint.sh ]
+            [ -f /docker-entrypoint.sh ]
+            [ -d /home/wso2carbon/.java/.systemPrefs ]
+            [ -d /home/wso2carbon/.java/.userPrefs ]
+
+  - name: ${{package.name}}-identity-server-doc
+    description: "Documentation for WSO2 Identity Server"
+    pipeline:
+      - uses: split/manpages
+
+test:
+  environment:
+    contents:
+      packages:
+        - curl
+        - openjdk-${{vars.runtime-java-version}}-default-jvm
+        - procps
+    environment:
+      JAVA_HOME: "/usr/lib/jvm/default-jvm"
+      CARBON_HOME: "/usr/share/java/wso2is"
+  pipeline:
+    - name: Check installation
+      runs: |
+        # Verify installation directories
+        [ -d /usr/share/java/wso2is ]
+        [ -f /usr/share/java/wso2is/bin/wso2server.sh ]
+    - name: Check Java compatibility
+      runs: |
+        java -version 2>&1 | grep -E "version \"${{vars.runtime-java-version}}\.|openjdk version \"${{vars.runtime-java-version}}\."
+    - name: Test WSO2 IS startup
+      runs: |
+        # Set up environment as Docker would
+        export WORKING_DIRECTORY="/home/wso2carbon"
+        export WSO2_SERVER_HOME="/usr/share/java/wso2is"
+
+        # Start using docker-entrypoint.sh
+        /usr/share/java/wso2is/docker-entrypoint.sh > /tmp/wso2is.log 2>&1 &
+        SERVER_PID=$!
+        sleep 5
+        if ! ps -p $SERVER_PID > /dev/null 2>&1; then
+          echo "Failed to launch application via docker-entrypoint.sh"
+          exit 1
+        fi
+
+        echo "Waiting for server to start..."
+        TIMEOUT=60
+        ELAPSED=0
+        STARTED=false
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          if grep -q "WSO2 Carbon started in" /tmp/wso2is.log 2>/dev/null; then
+            echo "Server started successfully!"
+            STARTUP_TIME=$(grep "WSO2 Carbon started in" /tmp/wso2is.log | sed 's/.*started in \([0-9]*\) sec.*/\1/')
+            echo "  Startup time: ${STARTUP_TIME} seconds"
+            STARTED=true
+            break
+          fi
+
+          if ! ps -p $SERVER_PID > /dev/null 2>&1; then
+            echo "Server process died"
+            echo "Last 50 lines of log:"
+            tail -50 /tmp/wso2is.log
+            exit 1
+          fi
+
+          sleep 5
+          ELAPSED=$((ELAPSED + 5))
+          echo "  Waiting... ($ELAPSED seconds elapsed)"
+        done
+
+        if [ "$STARTED" = "false" ]; then
+          echo "Server failed to start within $TIMEOUT seconds"
+          echo "Last 50 lines of log:"
+          tail -50 /tmp/wso2is.log
+          exit 1
+        fi
+
+        # Give it a few more seconds to fully initialize
+        sleep 10
+    - name: Test SCIM API
+      runs: |
+        RESPONSE=$(curl -k -s -u "admin:admin" -w "\n%{http_code}" "https://localhost:9443/scim2/Users" 2>/dev/null)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "SCIM API is working (HTTP $HTTP_CODE)"
+        else
+          echo "SCIM API returned HTTP $HTTP_CODE"
+          exit 1
+        fi
+    - name: Test OAuth2 endpoints
+      runs: |
+        RESPONSE=$(curl -k -s -w "\n%{http_code}" "https://localhost:9443/oauth2/oidcdiscovery/.well-known/openid-configuration" 2>/dev/null)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "OAuth2 discovery endpoint is working (HTTP 200)"
+        else
+          echo "OAuth2 endpoint returned HTTP $HTTP_CODE"
+          exit 1
+        fi
+    - name: Test management console
+      runs: |
+        RESPONSE=$(curl -k -s -o /dev/null -w "%{http_code}" "https://localhost:9443/carbon" 2>/dev/null)
+
+        if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "302" ]; then
+          echo "Management console is accessible (HTTP $RESPONSE)"
+        else
+          echo "Management console returned HTTP $RESPONSE"
+          exit 1
+        fi
+    - name: Create a test user via SCIM
+      runs: |
+        RESPONSE=$(curl -k -s -u "admin:admin" -X POST \
+          -H "Content-Type: application/json" \
+          -d '{
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+            "userName": "testuser",
+            "password": "Test123!",
+            "emails": [{
+              "type": "home",
+              "value": "test@example.com",
+              "primary": true
+            }]
+          }' \
+          -w "\n%{http_code}" \
+          "https://localhost:9443/scim2/Users" 2>/dev/null)
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+
+        if [ "$HTTP_CODE" = "201" ]; then
+          echo "Successfully created test user (HTTP 201)"
+          USER_ID=$(echo "$RESPONSE" | head -n -1 | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+          echo "  User ID: $USER_ID"
+        else
+          echo "Failed to create user (HTTP $HTTP_CODE)"
+          exit 1
+        fi
+    - name: Test OAuth2 token operations
+      runs: |
+        RESPONSE=$(curl -k -s -w "\n%{http_code}" "https://localhost:9443/oauth2/introspect" 2>/dev/null)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+
+        if [ "$HTTP_CODE" = "401" ]; then
+          echo "Introspection endpoint is protected (HTTP 401)"
+        else
+          echo "Introspection endpoint returned unexpected HTTP $HTTP_CODE"
+          exit 1
+        fi
+
+        # Test revocation endpoint with POST and proper content type
+        echo "Testing token revocation endpoint..."
+        RESPONSE=$(curl -k -s -X POST \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\n%{http_code}" \
+          "https://localhost:9443/oauth2/revoke" 2>/dev/null)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+
+        # 400 is expected when no token is provided, 401 if no auth provided
+        if [ "$HTTP_CODE" = "400" ] || [ "$HTTP_CODE" = "401" ]; then
+          echo "Revocation endpoint is accessible (HTTP $HTTP_CODE)"
+        else
+          echo "Revocation endpoint returned unexpected HTTP $HTTP_CODE"
+          exit 1
+        fi
+    - name: Test SAML SSO metadata
+      runs: |
+        RESPONSE=$(curl -k -s -w "\n%{http_code}" "https://localhost:9443/identity/metadata/saml2" 2>/dev/null)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+
+        if [ "$HTTP_CODE" = "200" ] && echo "$BODY" | grep -q "EntityDescriptor"; then
+          echo "SAML metadata endpoint is working (HTTP 200)"
+          echo "  Contains EntityDescriptor element"
+        else
+          echo "SAML metadata endpoint failed (HTTP $HTTP_CODE)"
+          exit 1
+        fi
+    - name: Test OAuth-protected endpoints
+      runs: |
+        CLIENT_RESPONSE=$(curl -k -s -u "admin:admin" -X POST \
+          -H "Content-Type: application/json" \
+          -d '{
+            "client_name": "test_client",
+            "grant_types": ["password"],
+            "redirect_uris": ["http://localhost"]
+          }' \
+          "https://localhost:9443/api/identity/oauth2/dcr/v1.1/register" 2>/dev/null)
+
+        echo "DCR Response: $CLIENT_RESPONSE"
+
+        CLIENT_ID=$(echo "$CLIENT_RESPONSE" | grep -o '"client_id":"[^"]*"' | cut -d'"' -f4)
+        CLIENT_SECRET=$(echo "$CLIENT_RESPONSE" | grep -o '"client_secret":"[^"]*"' | cut -d'"' -f4)
+
+        if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+          echo "Failed to register OAuth client"
+          exit 1
+        fi
+        echo "OAuth client registered (Client ID: $CLIENT_ID)"
+
+        # Get access token with scopes
+        echo "Getting access token..."
+        TOKEN_RESPONSE=$(curl -k -s -X POST \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -u "$CLIENT_ID:$CLIENT_SECRET" \
+          -d "grant_type=password&username=admin&password=admin&scope=openid internal_login" \
+          "https://localhost:9443/oauth2/token" 2>/dev/null)
+
+        echo "Token Response: $TOKEN_RESPONSE"
+
+        ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+
+        if [ -z "$ACCESS_TOKEN" ]; then
+          echo "Failed to get access token"
+          exit 1
+        fi
+        echo "Access token obtained"
+
+        # Verify we got an ID token (OpenID Connect)
+        echo "Verifying ID token..."
+        ID_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"id_token":"[^"]*"' | cut -d'"' -f4)
+        if [ -n "$ID_TOKEN" ]; then
+          echo "ID token received (OpenID Connect working)"
+        else
+          echo "No ID token in response"
+          exit 1
+        fi
+
+        # Test OAuth userinfo endpoint
+        echo "Testing OAuth userinfo endpoint..."
+        RESPONSE=$(curl -k -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+          -w "\n%{http_code}" \
+          "https://localhost:9443/oauth2/userinfo" 2>/dev/null)
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "Userinfo endpoint accessible with OAuth (HTTP 200)"
+          USERNAME=$(echo "$BODY" | grep -o '"sub":"[^"]*"' | cut -d'"' -f4)
+          if [ -n "$USERNAME" ]; then
+            echo "  User: $USERNAME"
+          fi
+        else
+          echo "Userinfo endpoint returned HTTP $HTTP_CODE"
+          echo "  Response: $BODY"
+          exit 1
+        fi
+
+        # Test JWKS endpoint (for token verification)
+        echo "Testing JWKS endpoint..."
+        RESPONSE=$(curl -k -s -w "\n%{http_code}" \
+          "https://localhost:9443/oauth2/jwks" 2>/dev/null)
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "JWKS endpoint accessible (HTTP 200)"
+          KEYS=$(echo "$RESPONSE" | head -n -1 | grep -o '"kid"' | wc -l)
+          echo "  Found $KEYS signing keys"
+        else
+          echo "JWKS endpoint returned HTTP $HTTP_CODE"
+          exit 1
+        fi
+    - name: Test SCIM Groups endpoint
+      runs: |
+        RESPONSE=$(curl -k -s -u "admin:admin" -X POST \
+          -H "Content-Type: application/json" \
+          -d '{
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+            "displayName": "testgroup",
+            "members": []
+          }' \
+          -w "\n%{http_code}" \
+          "https://localhost:9443/scim2/Groups" 2>/dev/null)
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+
+        if [ "$HTTP_CODE" = "201" ]; then
+          echo "Successfully created test group (HTTP 201)"
+          GROUP_ID=$(echo "$RESPONSE" | head -n -1 | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+          echo "  Group ID: $GROUP_ID"
+        else
+          echo "Failed to create group (HTTP $HTTP_CODE)"
+          exit 1
+        fi
+
+        # List groups
+        echo "Listing SCIM groups..."
+        RESPONSE=$(curl -k -s -u "admin:admin" -w "\n%{http_code}" \
+          "https://localhost:9443/scim2/Groups" 2>/dev/null)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "SCIM Groups listing is working (HTTP 200)"
+          GROUP_COUNT=$(echo "$RESPONSE" | head -n -1 | grep -o '"totalResults":[0-9]*' | cut -d':' -f2)
+          echo "  Total groups: $GROUP_COUNT"
+        else
+          echo "SCIM Groups listing failed (HTTP $HTTP_CODE)"
+          exit 1
+        fi
+
+update:
+  enabled: true
+  manual: true # Manual step required - details in 'vars' section.
+  github:
+    identifier: wso2/product-is
+    strip-prefix: v
+    tag-filter: v
